@@ -38,14 +38,14 @@ class GraphicalModel:
                 if len(splits) > 1:
                     parents = splits[1].split()
                 data = [float(i) for i in re.findall(
-                    r'[0-9]+[.]?[0-9]+', record[1])]
+                    r'[0-1][.][0-9]+', record[1])]
                 self.factorize(node, parents, data)
 
     def connect(self, father, child):
         """
         Connect Two nodes.
         """
-        if father in self.net and child in self.net:
+        if father in self.net and child in self.net and child not in self.net[father]:
             self.net[father].append(child)
 
     def disconnect(self, father, child):
@@ -82,8 +82,26 @@ class GraphicalModel:
             self.net.pop(node)
             self.outcomeSpace.pop(node)
 
-    def save(self):
-        pass
+    def save(self, fileName):
+        f = open(fileName, 'w')
+        f.write('net\n{\n}\n')
+
+        # first node domain part
+        for node, values in self.outcomeSpace.items():
+            outcome = " ".join(
+                ['"' + value + '"' for value in values])
+            text = 'node %s \n{\n  states = (%s);\n}\n' % (node, outcome)
+            f.write(text)
+
+        # add data
+        for node, relation in self.factors.items():
+            potential = relation['dom'][0]
+            data = " ".join(relation['table'].values())
+            if len(relation['dom']) > 1:
+                potential += ' | ' + " ".join(relation['dom'][1:])
+                data = " "
+
+        f.close()
 
     def showGraph(self):
         """
