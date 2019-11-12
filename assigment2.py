@@ -36,10 +36,10 @@ class GraphicalModel:
                 node = splits[0]
                 parents = []
                 if len(splits) > 1:
-                    parents = splits[1].split()
+                    parents = list(reversed(splits[1].split()))
                 data = [float(i) for i in re.findall(
                     r'[0-1][.][0-9]+', record[1])]
-                self.factorize(node, parents, data)
+                self.factorize(node, data, parents)
 
     def connect(self, father, child):
         """
@@ -55,12 +55,12 @@ class GraphicalModel:
         if father in self.net and child in self.net:
             self.net[father].remove(child)
 
-    def factorize(self, node, parents, data):
+    def factorize(self, node, data, parents=[]):
         """
         Specify probabilities for a node.
+        data is a 1-d array or a simple list.
         """
-        dom = [node] + parents
-        dom.reverse()
+        dom = parents + [node]
         dom = tuple(dom)
         for parent in parents:
             self.connect(parent, node)
