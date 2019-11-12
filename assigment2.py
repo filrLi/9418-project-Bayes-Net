@@ -67,6 +67,7 @@ class GraphicalModel:
 
         self.factors[node] = {'dom': dom, 'table': odict()}
         outcome_product = product(*[self.outcomeSpace[node] for node in dom])
+        assert(len(outcome_product) == len(data))
         for i, combination in enumerate(outcome_product):
             self.factors[node]['table'][combination] = data[i]
 
