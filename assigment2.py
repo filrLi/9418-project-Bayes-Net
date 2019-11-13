@@ -3,6 +3,8 @@ Written by Zitong Li for COMP9418 assignment 2.
 """
 
 import re
+import numpy as np
+import copy
 from graphviz import Digraph
 from itertools import product
 from collections import OrderedDict as odict
@@ -67,7 +69,8 @@ class GraphicalModel:
 
         self.factors[node] = {'dom': dom, 'table': odict()}
         outcome_product = product(*[self.outcomeSpace[node] for node in dom])
-        assert(len(outcome_product) == len(data))
+        assert np.prod([len(self.outcomeSpace[node])
+                        for node in dom]) == len(data), 'CPT length illegal'
         for i, combination in enumerate(outcome_product):
             self.factors[node]['table'][combination] = data[i]
 
@@ -116,3 +119,62 @@ class GraphicalModel:
             for w in self.net[v]:
                 dot.edge(str(v), str(w))
         return dot
+
+    def prune(self, query, evidence):
+        qe = set(query + evidence)
+        assert all([_ in self.net for _ in qe])
+        newG = copy.deepcopy(self)
+        all_deleted = 0
+
+        while not all_deleted:
+            all_deleted = 1
+            W = set()
+            for node, children in newG.net.items():
+                if node not in qe and not children:
+                    W.add(node)
+                    all_deleted = 0
+            for leaf in W:
+                newG.net.pop(leaf)
+            # clear the child who have been deleted
+            for node, children in newG.net.items():
+                newG.net[node] = [_ for _ in children if _ not in W]
+
+        netcopy = copy.deepcopy(newG.net)
+        for node in evidence:
+            netcopy[node] = []
+
+        reachable_from_q = self.spread(self.make_undirected(netcopy), query)
+        nodes = list(newG.net.keys())
+        for node in nodes:
+            if node not in qe | reachable_from_q:
+                newG.net.pop(node)
+        return newG
+
+    def spread(self, graph, source):
+        visited = set()
+        for node in source:
+            self.spread_help(graph, node, visited)
+        return visited
+
+    def spread_help(self, graph, node, visited):
+        visited.add(node)
+        for child in graph[node]:
+            if child not in visited:
+                self.spread_help(graph, child, visited)
+
+    def make_undirected(self, graph):
+        undirectG = graph.copy()
+        GT = self.transposeGraph(graph)
+        for node in graph:
+            undirectG[node] += GT[node]
+        return undirectG
+
+    def transposeGraph(self, G):
+        GT = dict((v, []) for v in G)
+        for v in G:
+            for w in G[v]:
+                if w in GT:
+                    GT[w].append(v)
+                else:
+                    GT[w] = [v]
+        return GT
