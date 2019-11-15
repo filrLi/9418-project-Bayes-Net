@@ -4,6 +4,7 @@ Written by Zitong Li for COMP9418 assignment 2.
 
 import re
 import numpy as np
+import pandas as pd
 import copy
 from graphviz import Digraph
 from itertools import product
@@ -15,6 +16,7 @@ class GraphicalModel:
         self.net = dict()
         self.factors = dict()
         self.outcomeSpace = dict()
+        self.node_value = dict()
 
     def load(self, FileName):
         """
@@ -120,7 +122,7 @@ class GraphicalModel:
                 dot.edge(str(v), str(w))
         return dot
 
-    def prune(self, query, evidence):
+    def prune(self, query, evidence=[]):
         qe = set(query + evidence)
         assert all([_ in self.net for _ in qe])
         newG = copy.deepcopy(self)
@@ -134,7 +136,7 @@ class GraphicalModel:
                     W.add(node)
                     all_deleted = 0
             for leaf in W:
-                newG.net.pop(leaf)
+                newG.remove(leaf)
             # clear the child who have been deleted
             for node, children in newG.net.items():
                 newG.net[node] = [_ for _ in children if _ not in W]
@@ -147,7 +149,7 @@ class GraphicalModel:
         nodes = list(newG.net.keys())
         for node in nodes:
             if node not in qe | reachable_from_q:
-                newG.net.pop(node)
+                newG.remove(node)
         return newG
 
     def spread(self, graph, source):
@@ -178,3 +180,117 @@ class GraphicalModel:
                 else:
                     GT[w] = [v]
         return GT
+
+    def gibbs_sampling(self, q_vars, sample_num, chain_num=2, **q_evis):
+        prunned_graph = self.prune(q_vars, list(q_evis.keys()))
+        chains = prunned_graph.burn_in(chain_num, q_evis)
+        samples = []
+        # fisrt sample
+        sample = dict()
+        for var in q_vars:
+            sample[var] = chains[0].node_value[var]
+        samples.append(sample)
+        curr = 1
+        while curr < sample_num:
+            sample = dict()
+            for var in q_vars:
+                chain = chains[np.random.choice(chain_num)]
+                pre_value = samples[curr - 1][var]
+                value = chain.sample_once(var)
+                A = chain.get_acceptance(var, pre_value, value)
+                sample[var] = np.random.choice(
+                    [value, pre_value], 1, p=[A, 1-A])[0]
+            samples.append(sample)
+            curr += 1
+        return samples
+
+    def get_acceptance(self, node, pre, curr):
+        dom = self.factors[node]['dom']
+        parents = dom[: -1]
+        parents_value = [self.node_value[parent] for parent in parents]
+        ppre = self.factors[node]['table'][tuple(parents_value + [pre])]
+        pcurr = self.factors[node]['table'][tuple(parents_value + [curr])]
+        return min(1, pcurr/ppre)
+
+    def burn_in(self, chain_num, evidences, window_size=100):
+        chains = []
+        chains_non_evis = []
+        for seed in range(chain_num):
+            np.random.seed(seed)
+            chain = copy.deepcopy(self)
+            # 1. fix evidence
+            chain.node_value = evidences.copy()
+            # 2: Initialize other variables
+            non_evis = dict()
+            for node, domain in self.outcomeSpace.items():
+                if node not in evidences:
+                    value = np.random.choice(domain, 1)[0]
+                    chain.node_value[node] = value
+                    non_evis[node] = [value]
+            chains.append(chain)
+            chains_non_evis.append(non_evis)
+
+        sample_count = 1
+        while True:
+            if sample_count >= window_size:
+                if self.mixed(chains_non_evis, self.outcomeSpace):
+                    break
+                # clear the chains_non_evis
+                chains_non_evis = [{
+                    node: []
+                    for node in chains_non_evis[i].keys()
+                } for i in range(chain_num)]
+                sample_count = 0
+
+            # 3: Choose a variable ordering O
+            O = np.random.permutation(list(chains_non_evis[0].keys()))
+            # 4: Repeat sample non_evis in the order O
+            for var in O:
+                for i, chain in enumerate(chains):
+                    value = chain.sample_once(var)
+                    chain.node_value[var] = value
+                    chains_non_evis[i][var].append(value)
+                sample_count += 1
+        return chains
+
+    def sample_once(self, node):
+        dom = self.factors[node]['dom']
+        parents = dom[: -1]
+        parents_value = [self.node_value[parent] for parent in parents]
+        combinations = [tuple(parents_value + [node_value])
+                        for node_value in self.outcomeSpace[node]]
+        prob_list = [self.factors[node]['table'][combination]
+                     for combination in combinations]
+        return np.random.choice(self.outcomeSpace[node], 1, p=prob_list)[0]
+
+    @staticmethod
+    def convert(list_of_dict, outcomeSpace):
+        mapping = dict()
+        for node, values in outcomeSpace.items():
+            mapping[node] = dict()
+            for value in values:
+                mapping[node][value] = (values.index(value)+1) / len(values)
+        for i, record in enumerate(list_of_dict):
+            list_of_dict[i] = {key: [mapping[key][value]
+                                     for value in item] for key, item in record.items()}
+        return list_of_dict
+
+    def mixed(self, chain_vars, outcomeSpace):
+        """
+        to judge whether chain_vars are mixed up
+        chain_vars = [
+            {a:[...], b:[...] ...},
+            {a:[...], b:[...] ...}]
+        """
+        # covert text value into num like value
+        chain_vars = self.convert(chain_vars, outcomeSpace)
+
+        parameters = list(chain_vars[0].keys())
+        P_hat = []
+        df_list = [pd.DataFrame(var_dic) for var_dic in chain_vars]
+        concat_df = pd.concat(df_list, ignore_index=True)
+        for parm in parameters:
+            W = np.mean([df[parm].var() for df in df_list])
+            B = concat_df[parm].var()
+            P_hat.append((B / W) ** 0.5)
+        return all([_ < 1.1 for _ in P_hat])

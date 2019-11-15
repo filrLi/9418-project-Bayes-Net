@@ -1,16 +1,21 @@
+import pandas as pd
 from assigment2 import GraphicalModel
 
 g = GraphicalModel()
 
-# g.load('small/asia.net')
+g.load('small/asia.net')
 
-# for node in g.factors:
-#     print(g.factors[node])
+# listD = [{'a': ['1', '2', '3'], 'b':['5', '4', '5']},
+#          {'a': ['4', '2', '3'], 'b':['3', '6', '5']}]
+# outcomespace = {'a': ['1', '2', '3', '4'], 'b': ['6', '5', '3', '4']}
+# # p = g.convert(listD, outcomespace)
+# # p0 = pd.DataFrame(p[0])
+# # sp = sum(p0.var(axis=0))
+# # print(p0.var(axis=0))
+# # print(sp)
+# a = g.mixed(listD, outcomespace)
+# print(a)
 
-# for node, value in g.outcomeSpace.items():
-#     print(node, value)
-g.insert('node 1', ('yes', 'no'))
-g.insert('node 2', ('yes', 'no'))
-g.connect('node 1', 'node 2')
-g.factorize('node 1', [0.1, 0.9])
-print(g.factors)
+samples = g.gibbs_sampling(['lung', 'bronc'], 50, tub='yes')
+for sample in samples:
+    print(sample)
