@@ -77,6 +77,10 @@ class GraphicalModel:
             self.factors[node]['table'][combination] = data[i]
 
     def insert(self, Name, Outcome):
+        """
+        Outcome = [...]
+        Name : String
+        """
         if Name not in self.net:
             self.net[Name] = []
             self.outcomeSpace[Name] = Outcome
@@ -85,8 +89,34 @@ class GraphicalModel:
 
     def remove(self, node):
         if node in self.net:
+            for child in self.net[node]:
+                self.sum_out(child, node)
             self.net.pop(node)
             self.outcomeSpace.pop(node)
+            if node in self.factors:
+                self.factors.pop(node)
+            for other_node in self.net:
+                if node in self.net[other_node]:
+                    self.net[other_node].remove(node)
+
+    def sum_out(self, node, victim):
+        """
+        sum out the victim in the factor of node
+        """
+        assert node in self.net[victim], 'the node to sum out is not one of the parents'
+        f = self.factors[node]
+        new_dom = list(f['dom'])
+        new_dom.remove(victim)
+        table = list()
+        for entries in product(*[self.outcomeSpace[node] for node in new_dom]):
+            s = 0
+            for val in self.outcomeSpace[victim]:
+                entriesList = list(entries)
+                entriesList.insert(f['dom'].index(victim), val)
+                p = f['table'][tuple(entriesList)]
+                s = s + p
+            table.append((entries, s))
+        self.factors[node] = {'dom': tuple(new_dom), 'table': odict(table)}
 
     def save(self, fileName):
         f = open(fileName, 'w')
@@ -122,12 +152,13 @@ class GraphicalModel:
                 dot.edge(str(v), str(w))
         return dot
 
-    def prune(self, query, evidence=[]):
-        qe = set(query + evidence)
+    def prune(self, query, **evidence):
+        evi_vars = list(evidence.keys())
+        qe = set(query + evi_vars)
         assert all([_ in self.net for _ in qe])
         newG = copy.deepcopy(self)
         all_deleted = 0
-
+        # prune nodes
         while not all_deleted:
             all_deleted = 1
             W = set()
@@ -150,7 +181,36 @@ class GraphicalModel:
         for node in nodes:
             if node not in qe | reachable_from_q:
                 newG.remove(node)
+
+        # prune edge
+        for node, value in evidence.items():
+            for child in newG.net[node]:
+                newG.factors[child] = self.update(
+                    newG.factors[child], node, value, newG.outcomeSpace)
+            newG.net[node] = []
+            newG.node_value[node] = value
+
         return newG
+
+    @staticmethod
+    def update(factor, node, value, outcomeSpace):
+        assert node in factor['dom'], 'such node is not in this CPT'
+        assert value in outcomeSpace[node], 'no such value for this node'
+        new_dom = copy.copy(factor['dom'])
+        factor_outcomeSpace = {node: outcomeSpace[node] for node in new_dom}
+        factor_outcomeSpace[node] = (value,)
+        node_index = new_dom.index(node)
+        new_dom_list = list(new_dom)
+        new_dom_list.remove(node)
+        new_dom = tuple(new_dom_list)
+        new_table = odict()
+        valid_records = product(*[_ for _ in factor_outcomeSpace.values()])
+        for record in valid_records:
+            record_list = list(record)
+            record_list.pop(node_index)
+            new_record = tuple(record_list)
+            new_table[new_record] = factor['table'][record]
+        return {'dom': new_dom, 'table': new_table}
 
     def spread(self, graph, source):
         visited = set()
