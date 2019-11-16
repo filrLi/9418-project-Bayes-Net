@@ -4,6 +4,9 @@ from assigment2 import GraphicalModel
 g = GraphicalModel()
 
 g.load('small/asia.net')
+g.save('save_test.net')
+g.load('save_test.net')
+g.printFactor('either')
 
 # listD = [{'a': ['1', '2', '3'], 'b':['5', '4', '5']},
 #          {'a': ['4', '2', '3'], 'b':['3', '6', '5']}]
@@ -16,6 +19,6 @@ g.load('small/asia.net')
 # a = g.mixed(listD, outcomespace)
 # print(a)
 
-samples = g.gibbs_sampling(['lung', 'bronc'], 50, tub='yes')
-for sample in samples:
-    print(sample)
+# samples = g.gibbs_sampling(['lung', 'bronc'], 50, tub='yes')
+# for sample in samples:
+#     print(sample)

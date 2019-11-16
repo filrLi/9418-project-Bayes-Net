@@ -23,6 +23,7 @@ class GraphicalModel:
         """
         Load and initiate model from file
         """
+        self.__init__()
         with open(FileName, 'r') as f:
             content = f.read()
             node_pattern = re.compile(
@@ -127,17 +128,20 @@ class GraphicalModel:
         for node, values in self.outcomeSpace.items():
             outcome = " ".join(
                 ['"' + value + '"' for value in values])
-            text = 'node %s \n{\n  states = (%s);\n}\n' % (node, outcome)
+            text = 'node %s \n{\n  states = ( %s );\n}\n' % (node, outcome)
             f.write(text)
 
         # add data
-        for node, relation in self.factors.items():
-            potential = relation['dom'][0]
-            data = " ".join(relation['table'].values())
-            if len(relation['dom']) > 1:
-                potential += ' | ' + " ".join(relation['dom'][1:])
-                data = " "
-
+        for node, factor in self.factors.items():
+            potential = factor['dom'][-1]
+            data = " ".join([str(_) for _ in factor['table'].values()])
+            if len(factor['dom']) > 1:
+                parents = list(factor['dom'][:-1])
+                parents.reverse()
+                potential += ' | ' + " ".join(parents)
+            text = 'potential ( %s ) \n{\n  data = ( %s );\n}\n' % (
+                potential, data)
+            f.write(text)
         f.close()
 
     def printFactor(self, node):
