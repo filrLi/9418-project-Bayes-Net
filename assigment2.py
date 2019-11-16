@@ -9,6 +9,7 @@ import copy
 from graphviz import Digraph
 from itertools import product
 from collections import OrderedDict as odict
+from tabulate import tabulate
 
 
 class GraphicalModel:
@@ -56,7 +57,7 @@ class GraphicalModel:
         """
         Disconnect Two nodes.
         """
-        if father in self.net and child in self.net:
+        if father in self.net and child in self.net and child in self.net[father]:
             self.net[father].remove(child)
 
     def factorize(self, node, data, parents=[]):
@@ -138,6 +139,17 @@ class GraphicalModel:
                 data = " "
 
         f.close()
+
+    def printFactor(self, node):
+        f = self.factors[node]
+        table = list()
+        for key, item in f['table'].items():
+            k = list(key)
+            k.append(item)
+            table.append(k)
+        dom = list(f['dom'])
+        dom.append('Pr')
+        print(tabulate(table, headers=dom, tablefmt='orgtbl'))
 
     def showGraph(self):
         """
@@ -241,9 +253,11 @@ class GraphicalModel:
                     GT[w] = [v]
         return GT
 
-    def gibbs_sampling(self, q_vars, sample_num, chain_num=2, **q_evis):
-        prunned_graph = self.prune(q_vars, list(q_evis.keys()))
-        chains = prunned_graph.burn_in(chain_num, q_evis)
+    def gibbs_sampling(self, sample_num, chain_num=2, q_vars='all', **q_evis):
+        if q_vars == 'all':
+            q_vars = [_ for _ in self.net.keys() if _ not in q_evis]
+        prunned_graph = self.prune(q_vars, **q_evis)
+        chains = prunned_graph.burn_in(chain_num, **q_evis)
         samples = []
         # fisrt sample
         sample = dict()
@@ -257,9 +271,10 @@ class GraphicalModel:
                 chain = chains[np.random.choice(chain_num)]
                 pre_value = samples[curr - 1][var]
                 value = chain.sample_once(var)
-                A = chain.get_acceptance(var, pre_value, value)
-                sample[var] = np.random.choice(
-                    [value, pre_value], 1, p=[A, 1-A])[0]
+                # A = chain.get_acceptance(var, pre_value, value)
+                # sample[var] = np.random.choice(
+                #     [value, pre_value], 1, p=[A, 1-A])[0]
+                sample[var] = value
             samples.append(sample)
             curr += 1
         return samples
@@ -272,7 +287,8 @@ class GraphicalModel:
         pcurr = self.factors[node]['table'][tuple(parents_value + [curr])]
         return min(1, pcurr/ppre)
 
-    def burn_in(self, chain_num, evidences, window_size=100):
+    def burn_in(self, chain_num, window_size=100, **evidences):
+        assert chain_num > 1, 'chain num is at least 2'
         chains = []
         chains_non_evis = []
         for seed in range(chain_num):
@@ -352,5 +368,13 @@ class GraphicalModel:
         for parm in parameters:
             W = np.mean([df[parm].var() for df in df_list])
             B = concat_df[parm].var()
-            P_hat.append((B / W) ** 0.5)
+            p_hat = ((B+0.01)/(W+0.01)) ** 0.5
+            P_hat.append(p_hat)
         return all([_ < 1.1 for _ in P_hat])
+
+    def answer_from_samples(self, samples):
+        samples = pd.DataFrame(samples)
+        answer = samples.groupby(samples.columns.tolist()).size(
+        ).reset_index().rename(columns={0: 'prob'})
+        answer.prob = answer.prob/answer.prob.sum()
+        return answer.sort_values(by=list(answer.columns[:-1]), ascending=False).reset_index(drop=True)
