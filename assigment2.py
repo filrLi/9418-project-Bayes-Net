@@ -2,13 +2,15 @@
 Written by Zitong Li for COMP9418 assignment 2.
 """
 
+import copy
 import re
+import math
+from collections import OrderedDict as odict
+from itertools import product
+
 import numpy as np
 import pandas as pd
-import copy
-from graphviz import Digraph
-from itertools import product
-from collections import OrderedDict as odict
+from graphviz import Digraph, Graph
 from tabulate import tabulate
 
 
@@ -19,6 +21,11 @@ class GraphicalModel:
         self.outcomeSpace = dict()
         self.node_value = dict()
 
+    ####################################
+    ######################################
+    # Representation
+    ########################################
+    ##########################################
     def load(self, FileName):
         """
         Load and initiate model from file
@@ -105,12 +112,12 @@ class GraphicalModel:
 
     def remove(self, node):
         if node in self.net:
-            for child in self.net[node]:
-                self.sum_out(child, node)
+            if node in self.factors:
+                for child in self.net[node]:
+                    self.sum_out(child, node)
+                self.factors.pop(node)
             self.net.pop(node)
             self.outcomeSpace.pop(node)
-            if node in self.factors:
-                self.factors.pop(node)
             for other_node in self.net:
                 if node in self.net[other_node]:
                     self.net[other_node].remove(node)
@@ -186,13 +193,17 @@ class GraphicalModel:
         """
         dot = Digraph()
         dot.attr(overlap="False", splines="True")
-        for v in self.net:
-            dot.node(str(v))
-        for v in self.net:
-            for w in self.net[v]:
-                dot.edge(str(v), str(w))
+        for node, children in self.net.items():
+            dot.node(node)
+            for child in children:
+                dot.edge(node, child)
         return dot
 
+    ####################################
+    ######################################
+    # Pruning and pre-processing techniques for inference
+    ########################################
+    ##########################################
     def prune(self, query, **evidences):
         """
         Prune the graph based of the query vcariables and evidences
@@ -304,7 +315,8 @@ class GraphicalModel:
             undirectG[node] += GT[node]
         return undirectG
 
-    def transposeGraph(self, G):
+    @staticmethod
+    def transposeGraph(G):
         """
         Input:
             graph: a directed graph
@@ -319,6 +331,85 @@ class GraphicalModel:
                 else:
                     GT[w] = [v]
         return GT
+
+    def get_ve_order(self):
+        """
+        get the variable elimination from the graph
+        Return:
+            prefix: a list of strings, list of variables in the elimination order
+        """
+        prefix = []
+        moral_graph = self.moralize()
+        moral_graph.factors = dict()
+        while len(moral_graph.net) > 0:
+            low = math.inf
+            for node, neighbors in moral_graph.net.items():
+                fill_num = moral_graph.count_fill(node)
+                if fill_num < low:
+                    min_fill_node = node
+                    low = fill_num
+            moral_graph.remove(min_fill_node)
+            prefix.append(min_fill_node)
+        return prefix
+
+    def count_fill(self, node):
+        """
+        count the fill in edges if eliminate node
+        Input:
+            node: string, the name of the node to be eliminate
+        Return:
+            int: fill-in edge count
+        """
+        neighbors = self.net[node]
+        neighbor_num = len(neighbors)
+        before = 0
+        for neighbor in neighbors:
+            for neighbor_s_neighbor in self.net[neighbor]:
+                if neighbor_s_neighbor in neighbors:
+                    before += 1
+        before //= 2
+        after = neighbor_num*(neighbor_num-1)//2
+        return after - before
+
+    def moralize(self):
+        """
+        moralize the graph
+        return:
+            a new moral graph
+        """
+        new_graph = copy.deepcopy(self)
+        graphT = self.transposeGraph(new_graph.net)
+        new_graph.net = self.make_undirected(new_graph.net)
+        for parents in graphT.values():
+            new_graph.connect_all(parents)
+        return new_graph
+
+    def connect_all(self, nodes):
+        """
+        connect every node in nodes to every other node
+        """
+        for father in nodes:
+            for child in nodes:
+                if father != child:
+                    self.connect(father, child)
+
+    def show_moral_graph(self):
+        moral_graph = self.moralize()
+        dot = Graph()
+        dot.attr(overlap="False", splines="True")
+        finished = []
+        for node, children in moral_graph.net.items():
+            dot.node(node)
+            for child in children:
+                if (child, node) not in finished:
+                    dot.edge(node, child)
+                    finished.append((node, child))
+        return dot
+    ####################################
+    ######################################
+    # Approximate inference
+    ########################################
+    ##########################################
 
     def gibbs_sampling(self, sample_num=100, chain_num=2, q_vars='all', **q_evis):
         """
