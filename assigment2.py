@@ -22,6 +22,8 @@ class GraphicalModel:
     def load(self, FileName):
         """
         Load and initiate model from file
+        input:
+            FileName: String
         """
         self.__init__()
         with open(FileName, 'r') as f:
@@ -50,6 +52,9 @@ class GraphicalModel:
     def connect(self, father, child):
         """
         Connect Two nodes.
+        Inputs:
+            father: String, name of the father node
+            child:  String, name of the child node
         """
         if father in self.net and child in self.net and child not in self.net[father]:
             self.net[father].append(child)
@@ -57,6 +62,9 @@ class GraphicalModel:
     def disconnect(self, father, child):
         """
         Disconnect Two nodes.
+        Inputs:
+            father: String, name of the father node
+            child:  String, name of the child node
         """
         if father in self.net and child in self.net and child in self.net[father]:
             self.net[father].remove(child)
@@ -65,6 +73,10 @@ class GraphicalModel:
         """
         Specify probabilities for a node.
         data is a 1-d array or a simple list.
+        Inputs:
+            node: Sting, the node you want to specify
+            data: 1-D array like, the CPT of the node
+            parents: list of strings, parents of the node
         """
         dom = parents + [node]
         dom = tuple(dom)
@@ -80,8 +92,10 @@ class GraphicalModel:
 
     def insert(self, Name, Outcome):
         """
-        Outcome = [...]
-        Name : String
+        simply insert a node to the graph
+        Inputs:
+            Outcome: a 1-D array-like, outcome space of this node
+            Name:    String, the name of the node
         """
         if Name not in self.net:
             self.net[Name] = []
@@ -104,6 +118,9 @@ class GraphicalModel:
     def sum_out(self, node, victim):
         """
         sum out the victim in the factor of node
+        Inputs:
+            node: String, name of the node
+            victim:  String, name of the node to be sum out
         """
         assert node in self.net[victim], 'the node to sum out is not one of the parents'
         f = self.factors[node]
@@ -121,6 +138,11 @@ class GraphicalModel:
         self.factors[node] = {'dom': tuple(new_dom), 'table': odict(table)}
 
     def save(self, fileName):
+        """
+        save the graph to a file
+        Inputs:
+            fileNamea: String, the path of the file you want to save to.
+        """
         f = open(fileName, 'w')
         f.write('net\n{\n}\n')
 
@@ -145,6 +167,9 @@ class GraphicalModel:
         f.close()
 
     def printFactor(self, node):
+        """
+        print the factor table of the node
+        """
         f = self.factors[node]
         table = list()
         for key, item in f['table'].items():
@@ -168,8 +193,16 @@ class GraphicalModel:
                 dot.edge(str(v), str(w))
         return dot
 
-    def prune(self, query, **evidence):
-        evi_vars = list(evidence.keys())
+    def prune(self, query, **evidences):
+        """
+        Prune the graph based of the query vcariables and evidences
+        Inputs:
+            query: list of strings, the query variables
+            evidences: dictionary, key: node, value: outcome of the node
+        Outputs:
+            a new graph
+        """
+        evi_vars = list(evidences.keys())
         qe = set(query + evi_vars)
         assert all([_ in self.net for _ in qe])
         newG = copy.deepcopy(self)
@@ -189,7 +222,7 @@ class GraphicalModel:
                 newG.net[node] = [_ for _ in children if _ not in W]
 
         netcopy = copy.deepcopy(newG.net)
-        for node in evidence:
+        for node in evidences:
             netcopy[node] = []
 
         reachable_from_q = self.spread(self.make_undirected(netcopy), query)
@@ -199,7 +232,7 @@ class GraphicalModel:
                 newG.remove(node)
 
         # prune edge
-        for node, value in evidence.items():
+        for node, value in evidences.items():
             for child in newG.net[node]:
                 newG.factors[child] = self.update(
                     newG.factors[child], node, value, newG.outcomeSpace)
@@ -210,7 +243,17 @@ class GraphicalModel:
 
     @staticmethod
     def update(factor, node, value, outcomeSpace):
-        assert node in factor['dom'], 'such node is not in this CPT'
+        """
+        Specify a value to a node.
+        Inputs:
+            factor: the factor of the node
+            node: the node to update
+            value: the value that will be assigned to the node
+            outcomeSpace: Dictionary, the outcome space of all nodes
+        Return:
+            a new factor without node
+        """
+        assert node in factor['dom'][:-1], 'such node is not in this CPT'
         assert value in outcomeSpace[node], 'no such value for this node'
         new_dom = copy.copy(factor['dom'])
         factor_outcomeSpace = {node: outcomeSpace[node] for node in new_dom}
@@ -229,6 +272,14 @@ class GraphicalModel:
         return {'dom': new_dom, 'table': new_table}
 
     def spread(self, graph, source):
+        """
+        find all nodes reachable from source
+        Inputs:
+            graph: Dictionary, the graph
+            source: list of strings, the node where we start the spread
+        Return:
+            visted: a set of strings, the nodes reachabel from source.
+        """
         visited = set()
         for node in source:
             self.spread_help(graph, node, visited)
@@ -241,6 +292,12 @@ class GraphicalModel:
                 self.spread_help(graph, child, visited)
 
     def make_undirected(self, graph):
+        """
+        Input:
+            graph: a directed graph
+        Return:
+            an undirected (bidirected) graph
+        """
         undirectG = graph.copy()
         GT = self.transposeGraph(graph)
         for node in graph:
@@ -248,6 +305,12 @@ class GraphicalModel:
         return undirectG
 
     def transposeGraph(self, G):
+        """
+        Input:
+            graph: a directed graph
+        Return:
+            a transposed graph
+        """
         GT = dict((v, []) for v in G)
         for v in G:
             for w in G[v]:
@@ -257,7 +320,17 @@ class GraphicalModel:
                     GT[w] = [v]
         return GT
 
-    def gibbs_sampling(self, sample_num, chain_num=2, q_vars='all', **q_evis):
+    def gibbs_sampling(self, sample_num=100, chain_num=2, q_vars='all', **q_evis):
+        """
+        gibbs sampling the graph based on query, sample_num and chain_num specified by the user
+        Input:
+            sample_num: # of samples
+            chain_num: # of chains
+            q_vars: list of strings, the query variables, defalt is 'all', which means all variables in the graph other than query evidences
+            q_evis: dictionary, the query evidences
+        Return:
+            samples: a list of dictionaries, each one is a sample contains the node and its value in query
+        """
         if q_vars == 'all':
             q_vars = [_ for _ in self.net.keys() if _ not in q_evis]
         prunned_graph = self.prune(q_vars, **q_evis)
@@ -284,6 +357,15 @@ class GraphicalModel:
         return samples
 
     def get_acceptance(self, node, pre, curr):
+        """
+        compute the acceptande probability of this sample
+        Inputs:
+            node: string, the node waiting to be asigned
+            pre: string, the previous value assigned to this node
+            curr: string, the current value waiting to be assigned to this node
+        Return:
+            accpt_prob: float, the acceptande probability
+        """
         dom = self.factors[node]['dom']
         parents = dom[: -1]
         parents_value = [self.node_value[parent] for parent in parents]
@@ -292,6 +374,15 @@ class GraphicalModel:
         return min(1, pcurr/ppre)
 
     def burn_in(self, chain_num, window_size=100, **evidences):
+        """
+        generate chains and keep sampling until mixed
+        Inputs:
+            chain_num: int, # of chains
+            window_size: int, # of samples used to test if chains are mixed, defalt is 100
+            evidences: dictionary, the evidences of the query
+        Return:
+            chains: list of GraphicalModel objects, the list of mixed chains
+        """
         assert chain_num > 1, 'chain num is at least 2'
         chains = []
         chains_non_evis = []
@@ -334,6 +425,13 @@ class GraphicalModel:
         return chains
 
     def sample_once(self, node):
+        """
+        sample once for a particular node
+        Input:
+            node: string, name of the node to sample
+        Return:
+            a string, a value from this node's outcomeSpace
+        """
         dom = self.factors[node]['dom']
         parents = dom[: -1]
         parents_value = [self.node_value[parent] for parent in parents]
@@ -345,6 +443,14 @@ class GraphicalModel:
 
     @staticmethod
     def convert(list_of_dict, outcomeSpace):
+        """
+        convert the outcome string value from the outcomespace into float value between 0 and 1
+        Input:
+            list_of_dic: list of dictionary, each key in the dictionary is a variable and corresponding value is the history of its sample value
+            outcomeSpace: dictionary, the outcome space of all nodes
+        Return:
+            list_of_dic, converted list_of_dict
+        """
         mapping = dict()
         for node, values in outcomeSpace.items():
             mapping[node] = dict()
@@ -358,9 +464,14 @@ class GraphicalModel:
     def mixed(self, chain_vars, outcomeSpace):
         """
         to judge whether chain_vars are mixed up
-        chain_vars = [
-            {a:[...], b:[...] ...},
-            {a:[...], b:[...] ...}]
+        Inputs:
+            chain_vars = [
+                {a:[...], b:[...] ...},
+                {a:[...], b:[...] ...}]
+                the history of samples' value
+            outcomeSpace: dictionary, the outcome space of all nodes
+        Return:
+            bool, whether chain_vars are mixed up
         """
         # covert text value into num like value
         chain_vars = self.convert(chain_vars, outcomeSpace)
@@ -377,6 +488,13 @@ class GraphicalModel:
         return all([_ < 1.1 for _ in P_hat])
 
     def answer_from_samples(self, samples):
+        """
+        Answer to the query based on the samples
+        Input:
+            samples: list of dictionary, where keys are variables, value are node's value
+        Return:
+            pandas dataframe, the probability of every occured combination
+        """
         samples = pd.DataFrame(samples)
         answer = samples.groupby(samples.columns.tolist()).size(
         ).reset_index().rename(columns={0: 'prob'})
