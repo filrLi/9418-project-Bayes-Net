@@ -114,7 +114,8 @@ class GraphicalModel:
         if node in self.net:
             if node in self.factors:
                 for child in self.net[node]:
-                    self.sum_out(child, node)
+                    if node in self.factors[child]['dom']:
+                        self.sum_out(child, node)
                 self.factors.pop(node)
             self.net.pop(node)
             self.outcomeSpace.pop(node)
@@ -129,7 +130,7 @@ class GraphicalModel:
             node: String, name of the node
             victim:  String, name of the node to be sum out
         """
-        assert node in self.net[victim], 'the node to sum out is not one of the parents'
+        assert victim in self.factors[node]['dom'], 'the node to sum out is not one of the parents'
         f = self.factors[node]
         new_dom = list(f['dom'])
         new_dom.remove(victim)
@@ -343,11 +344,17 @@ class GraphicalModel:
         moral_graph.factors = dict()
         while len(moral_graph.net) > 0:
             low = math.inf
+            min_degree = math.inf
             for node, neighbors in moral_graph.net.items():
                 fill_num = moral_graph.count_fill(node)
+                degree = len(moral_graph.net[node])
                 if fill_num < low:
                     min_fill_node = node
                     low = fill_num
+                elif fill_num == low:
+                    if degree < min_degree:
+                        min_fill_node = node
+                        min_degree = degree
             moral_graph.remove(min_fill_node)
             prefix.append(min_fill_node)
         return prefix
@@ -405,6 +412,71 @@ class GraphicalModel:
                     dot.edge(node, child)
                     finished.append((node, child))
         return dot
+
+    ####################################
+    ######################################
+    # Exact inference
+    ########################################
+    ##########################################
+    @staticmethod
+    def show_jointree(jointree):
+        dot = Graph()
+        dot.attr(overlap="False", splines="True")
+        finished = []
+        for cluster, neighbors in jointree.items():
+            dot.node(', '.join(cluster))
+            for neighbor in neighbors:
+                if (neighbor, cluster) not in finished:
+                    dot.edge(', '.join(cluster), ', '.join(neighbor))
+                    finished.append((cluster, neighbor))
+        return dot
+
+    def build_jointree(self, order):
+        """
+        self must be a moral graph
+        Args:
+            order (list): elimination order
+        """
+        for node, neighbors in self.net.items():
+            for neighbor in neighbors:
+                assert node in self.net[neighbor], 'the graph is not moral'
+
+        # 1. construct clusters
+        clusters = []
+        max_cluster_size = 0
+        for node in order:
+            cluster = set([node] + self.net[node])
+            self.connect_all(self.net[node])
+            self.remove(node)
+            if len(cluster) > max_cluster_size:
+                max_cluster_size = len(cluster)
+            clusters.append(cluster)
+        # 2. maitain RIP
+        cluster_seq = [tuple(_) for _ in clusters]
+        n = len(clusters)
+        for cluster in reversed(clusters):
+            if len(cluster) < max_cluster_size:
+                i = cluster_seq.index(tuple(cluster))
+                for pre in reversed(cluster_seq[:i]):
+                    if cluster.issubset(pre):
+                        cluster_seq.remove(tuple(cluster))
+                        cluster_seq.insert(i, pre)
+                        cluster_seq.remove(pre)
+                        break
+        # 3. assembly
+        jointree = dict()
+        jointree[cluster_seq[-1]] = []
+        n = len(cluster_seq)
+        for i in range(n-2, -1, -1):
+            jointree[cluster_seq[i]] = []
+            edge = set(cluster_seq[i+1]).union(
+                *[set(_) for _ in cluster_seq[i+2:]]) & set(cluster_seq[i])
+            for other in cluster_seq[i+1:]:
+                if edge.issubset(other):
+                    jointree[cluster_seq[i]].append(other)
+                    break
+        return jointree
+
     ####################################
     ######################################
     # Approximate inference
