@@ -475,7 +475,7 @@ class GraphicalModel:
                 if edge.issubset(other):
                     jointree[cluster_seq[i]].append(other)
                     break
-        return jointree
+        return JoinTree(jointree)
 
     ####################################
     ######################################
@@ -663,3 +663,92 @@ class GraphicalModel:
         ).reset_index().rename(columns={0: 'prob'})
         answer.prob = answer.prob/answer.prob.sum()
         return answer.sort_values(by=list(answer.columns[:-1]), ascending=False).reset_index(drop=True)
+
+
+class JoinTree:
+    def __init__(self, clusters=dict()):
+        """
+        cluster: key: list of node in this cluster, value: neighbor clusters
+        """
+        self.clusters = clusters
+        self.factors = dict()
+        self.outcomeSpace = dict()
+
+    def show_jointree(self):
+        dot = Graph()
+        dot.attr(overlap="False", splines="True")
+        finished = []
+        for cluster, neighbors in self.clusters.items():
+            dot.node(', '.join(cluster))
+            for neighbor in neighbors:
+                if (neighbor, cluster) not in finished:
+                    dot.edge(', '.join(cluster), ', '.join(neighbor))
+                    finished.append((cluster, neighbor))
+        return dot
+
+    def add_var(self, var, cluster):
+        """add variabel to a cluster, at least one neighbor of the cluster should have this variable
+
+        Args:
+            var (string): variable name
+            cluster (tuple): cluster
+        """
+        assert any([var in neighbor for neighbor in self.clusters[cluster]]
+                   ), 'at least one neighbor of the cluster should have this variable'
+        if var not in cluster:
+            old = cluster
+            cluster = list(cluster)
+            cluster.append(var)
+            cluster = tuple(cluster)
+            self.clusters[cluster] = self.clusters.pop(old)
+            for nb in self.clusters[cluster]:
+                self.clusters[nb].remove(old)
+                self.clusters[nb].append(cluster)
+
+    def merge(self, cluster1, cluster2):
+        """merge two neighboring clusters
+
+        Args:
+            cluster1 (list of nodes): cluster1
+            cluster2 (list of nodes): cluster2
+        """
+        assert cluster2 in self.clusters[cluster1] and cluster1 in self.clusters[cluster2], 'clusters are not neighbors'
+        assert cluster1 != cluster2
+        newcluster = tuple(set(cluster1) | set(cluster2))
+        self.clusters[newcluster] = list(
+            set(self.clusters.pop(cluster1)) | set(self.clusters.pop(cluster2)))
+        self.clusters[newcluster].remove(cluster1)
+        self.clusters[newcluster].remove(cluster2)
+        for nb in self.clusters[newcluster]:
+            print(nb)
+            self.clusters[nb].remove(cluster1)
+            self.clusters[nb].remove(cluster2)
+            self.clusters[nb].append(newcluster)
+
+    def add_cluster(self, cluster, next_to=None):
+        """add cluster to an existing cluster
+
+        Args:
+            cluster (list of nodes): new added cluster
+            next_to (cluster): an existing cluster
+        """
+        if next_to:
+            assert next_to in self.clusters, 'no such cluster'
+            assert set(cluster).issubset(
+                next_to), 'new added cluster should be a subset of the existing cluster'
+        if cluster not in self.clusters:
+            self.clusters[cluster] = []
+            if next_to:
+                self.clusters[cluster].append(next_to)
+                self.clusters[next_to].append(cluster)
+
+    def remove(self, cluster):
+        """remove a cluster from the jointree
+
+        Args:
+            cluster (list of nodes): cluster need to be removed
+        """
+        if cluster in self.clusters:
+            for nb in self.clusters[cluster]:
+                self.clusters[nb].remove(cluster)
+            self.clusters.pop(cluster)
