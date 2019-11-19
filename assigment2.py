@@ -7,6 +7,7 @@ import re
 import math
 from collections import OrderedDict as odict
 from itertools import product
+from functools import reduce
 
 import numpy as np
 import pandas as pd
@@ -233,16 +234,6 @@ class GraphicalModel:
             for node, children in newG.net.items():
                 newG.net[node] = [_ for _ in children if _ not in W]
 
-        netcopy = copy.deepcopy(newG.net)
-        for node in evidences:
-            netcopy[node] = []
-
-        reachable_from_q = self.spread(self.make_undirected(netcopy), query)
-        nodes = list(newG.net.keys())
-        for node in nodes:
-            if node not in qe | reachable_from_q:
-                newG.remove(node)
-
         # prune edge
         for node, value in evidences.items():
             for child in newG.net[node]:
@@ -250,7 +241,13 @@ class GraphicalModel:
                     newG.factors[child], node, value, newG.outcomeSpace)
             newG.net[node] = []
             newG.node_value[node] = value
-
+        
+        netcopy = copy.deepcopy(newG.net)
+        reachable_from_q = self.spread(self.make_undirected(netcopy), query)
+        nodes = list(newG.net.keys())
+        for node in nodes:
+            if node not in reachable_from_q:
+                newG.remove(node)
         return newG
 
     @staticmethod
@@ -402,15 +399,11 @@ class GraphicalModel:
 
     def show_moral_graph(self):
         moral_graph = self.moralize()
-        dot = Graph()
-        dot.attr(overlap="False", splines="True")
-        finished = []
+        dot = Graph(strict="True")
         for node, children in moral_graph.net.items():
             dot.node(node)
             for child in children:
-                if (child, node) not in finished:
-                    dot.edge(node, child)
-                    finished.append((node, child))
+                dot.edge(node, child)
         return dot
 
     ####################################
@@ -418,20 +411,7 @@ class GraphicalModel:
     # Exact inference
     ########################################
     ##########################################
-    @staticmethod
-    def show_jointree(jointree):
-        dot = Graph()
-        dot.attr(overlap="False", splines="True")
-        finished = []
-        for cluster, neighbors in jointree.items():
-            dot.node(', '.join(cluster))
-            for neighbor in neighbors:
-                if (neighbor, cluster) not in finished:
-                    dot.edge(', '.join(cluster), ', '.join(neighbor))
-                    finished.append((cluster, neighbor))
-        return dot
-
-    def build_jointree(self, order):
+    def to_jointree(self, order):
         """
         self must be a moral graph
         Args:
@@ -441,16 +421,18 @@ class GraphicalModel:
             for neighbor in neighbors:
                 assert node in self.net[neighbor], 'the graph is not moral'
 
+        moral_graph = copy.deepcopy(self)
         # 1. construct clusters
         clusters = []
         max_cluster_size = 0
         for node in order:
-            cluster = set([node] + self.net[node])
-            self.connect_all(self.net[node])
-            self.remove(node)
+            cluster = set([node] + moral_graph.net[node])
+            moral_graph.connect_all(moral_graph.net[node])
+            moral_graph.remove(node)
             if len(cluster) > max_cluster_size:
                 max_cluster_size = len(cluster)
             clusters.append(cluster)
+        
         # 2. maitain RIP
         cluster_seq = [tuple(_) for _ in clusters]
         n = len(clusters)
@@ -463,20 +445,39 @@ class GraphicalModel:
                         cluster_seq.insert(i, pre)
                         cluster_seq.remove(pre)
                         break
+        
         # 3. assembly
-        jointree = dict()
-        jointree[cluster_seq[-1]] = []
+        cluster_net = dict()
+        cluster_net[cluster_seq[-1]] = []
         n = len(cluster_seq)
         for i in range(n-2, -1, -1):
-            jointree[cluster_seq[i]] = []
+            cluster_net[cluster_seq[i]] = []
             edge = set(cluster_seq[i+1]).union(
                 *[set(_) for _ in cluster_seq[i+2:]]) & set(cluster_seq[i])
             for other in cluster_seq[i+1:]:
                 if edge.issubset(other):
-                    jointree[cluster_seq[i]].append(other)
+                    cluster_net[cluster_seq[i]].append(other)
                     break
-        return JoinTree(jointree)
+        # assign factors to jointree
+        factors = dict()
+        for cluster in cluster_seq:
+            factors[cluster] = self.join(*[self.factors[node] for node in cluster])
+            
+        return JoinTree(cluster_net, factors, self.outcomeSpace)
 
+    
+    def join(self, *factors):
+        common_vars = list(reduce(lambda x,y: x|y, [set(f['dom']) for f in factors]))
+        table = list()
+        for entries in product(*[self.outcomeSpace[node] for node in common_vars]):
+            entryDict = dict(zip(common_vars, entries))
+            p = 1
+            for f in factors:
+                f_entry = tuple(entryDict[var] for var in f['dom'])
+                pf = f['table'][f_entry]
+                p *= pf
+            table.append((entries, p))
+        return {'dom': tuple(common_vars), 'table': odict(table)}
     ####################################
     ######################################
     # Approximate inference
@@ -666,24 +667,29 @@ class GraphicalModel:
 
 
 class JoinTree:
-    def __init__(self, clusters=dict()):
+    def __init__(self, clusters=dict(), factors=dict(), outcomeSpace=dict()):
         """
         cluster: key: list of node in this cluster, value: neighbor clusters
         """
         self.clusters = clusters
-        self.factors = dict()
-        self.outcomeSpace = dict()
+        self.factors = factors
+        self.outcomeSpace = outcomeSpace
+        self.S = self.get_S(clusters)
+        self.messages = dict()
 
+    def get_S(self, clusters):
+        S = dict()
+        for cluster, nbs in clusters.items():
+            for nb in nbs:
+                S[(cluster, nb)] = set(cluster) & set(nb)
+        return S
+    
     def show_jointree(self):
-        dot = Graph()
-        dot.attr(overlap="False", splines="True")
-        finished = []
+        dot = Graph(strict = True)
         for cluster, neighbors in self.clusters.items():
             dot.node(', '.join(cluster))
             for neighbor in neighbors:
-                if (neighbor, cluster) not in finished:
-                    dot.edge(', '.join(cluster), ', '.join(neighbor))
-                    finished.append((cluster, neighbor))
+                dot.edge(', '.join(cluster), ', '.join(neighbor))
         return dot
 
     def add_var(self, var, cluster):
@@ -752,3 +758,212 @@ class JoinTree:
             for nb in self.clusters[cluster]:
                 self.clusters[nb].remove(cluster)
             self.clusters.pop(cluster)
+
+    def join(self, f1, f2):
+        """
+        argument 
+        `f1`, first factor to be joined.
+        `f2`, second factor to be joined.
+        `outcomeSpace`, dictionary with the domain of each variable
+        
+        Returns a new factor with a join of f1 and f2
+        """
+        outcomeSpace = self.outcomeSpace
+        # First, we need to determine the domain of the new factor. It will be union of the domain in f1 and f2
+        # But it is important to eliminate the repetitions
+        common_vars = list(f1['dom']) + list(set(f2['dom']) - set(f1['dom']))
+        
+        # We will build a table from scratch, starting with an empty list. Later on, we will transform the list into a odict
+        table = list()
+        
+        # Here is where the magic happens. The product iterator will generate all combinations of varible values 
+        # as specified in outcomeSpace. Therefore, it will naturally respect observed values
+        for entries in product(*[outcomeSpace[node] for node in common_vars]):
+            
+            # We need to map the entries to the domain of the factors f1 and f2
+            entryDict = dict(zip(common_vars, entries))
+            f1_entry = (entryDict[var] for var in f1['dom'])
+            f2_entry = (entryDict[var] for var in f2['dom'])
+            
+            p1 = prob(f1, *f1_entry)
+            p2 = prob(f2, *f2_entry)
+            
+            # Create a new table entry with the multiplication of p1 and p2
+            table.append((entries, p1 * p2))
+        return {'dom': tuple(common_vars), 'table': odict(table)}
+    
+    def marginalize(self, f, var):
+        """
+        argument 
+        `f`, factor to be marginalized.
+        `var`, variable to be summed out.
+        `outcomeSpace`, dictionary with the domain of each variable
+        
+        Returns a new factor f' with dom(f') = dom(f) - {var}
+        """    
+        outcomeSpace = self.outcomeSpace
+        # Let's make a copy of f domain and convert it to a list. We need a list to be able to modify its elements
+        new_dom = list(f['dom'])
+        new_dom.remove(var)
+        table = list()
+        for entries in product(*[outcomeSpace[node] for node in new_dom]):
+            s = 0
+
+            # We need to iterate over all possible outcomes of the variable var
+            for val in outcomeSpace[var]:
+                # To modify the tuple entries, we will need to convert it to a list
+                entriesList = list(entries)
+                # We need to insert the value of var in the right position in entriesList
+                entriesList.insert(f['dom'].index(var), val)
+                p = f['table'][tuple(entriesList)]
+                s = s + p
+                
+            # Create a new table entry with the multiplication of p1 and p2
+            table.append((entries, s))
+        return {'dom': tuple(new_dom), 'table': odict(table)}    
+    
+    
+    def printFactor(self, f):
+        table = list()
+        for key, item in f['table'].items():
+            k = list(key)
+            k.append(item)
+            table.append(k)
+        dom = list(f['dom'])
+        dom.append('Pr')
+        print(tabulate(table, headers=dom, tablefmt='orgtbl'))
+        
+    def queryCluster(self, node, query):
+        """
+        argument 
+        `factors`, dictionary with all factors.
+        `eTree`, elimination tree.
+        `messages`, dictionary with messages between neighbouring nodes
+        `node`, a node in the elimination tree whose cluster contain the query variables.
+        `query`, a list with query variables
+        
+        Returns factor with the marginal for the query variables
+        """
+        factors = self.factors
+        eTree = self.clusters
+        self.getMessages(node)
+        messages = self.messages
+        
+        # fx is an auxiliary factor. Initialize fx with the factor associated with the root node    
+        fx = factors[node]    
+        for v in eTree[node]:
+            # Call join to multiply the incomming messages from all nodes but v        
+            fx = self.join(fx, self.messages[(v,node)])
+        for v in fx['dom']:
+            if not v in query:
+                # Call marginalize to remove variable v from fx domain            
+                fx = self.marginalize(fx, v)
+        return fx
+    
+    def getMessages(self, root):
+        """
+        argument 
+        `factors`, dictionary with all factors.
+        `root`, root node.
+        `eTree`, elimination tree.
+        `S`, separators dictionary.
+        `outcomeSpace`, dictionary with the domain of each variable
+        
+        Returns dictionary with all messages
+        """
+        factors = self.factors
+        eTree = self.clusters
+        S = self.S
+        outcomeSpace = self.outcomeSpace
+        # For each neighbouring node of root, we start a depth-first search
+        for v in eTree[root]:
+            # Call pull and store the resulting message in messages[v+root]
+            self.messages[(v,root)] = self.pull(v, root)
+
+        # Now, we will do the push part of the code. We implement the code to compute the message root => v
+        for v in eTree[root]:
+            # messages[root+v] is initalized with the factor at root node
+            self.messages[(root,v)] = factors[root]
+            # Now, we multiply all incomming messages directed to root but the message from v
+            for w in eTree[root]:
+                if not v == w:
+                    # Call join to multiply the incomming messages from all nodes but v
+                    self.messages[(root,v)] = self.join(self.messages[(root,v)], self.messages[(w,root)])
+            # This is time to eliminate variables not in the separation between root and v
+            for w in self.messages[(root,v)]['dom']:
+                if not w in S[(v,root)]:
+                    # Call marginalize to remove variable v from messages[root+v] domain
+                    self.messages[(root,v)] = marginalize(messages[(root,v)], w)
+            # Call push recursively and go to the next node v                
+            self.push(v, root)
+        
+    
+    def pull(self, root, previous):
+        """
+        argument 
+        `root`, current node.
+        `previous`, node we came from in the search.
+        `factors`, dictionary with all factors.
+        `eTree`, elimination tree.
+        `S`, separators dictionary.
+        `messages`, dictionary with messages.
+        `outcomeSpace`, dictionary with the domain of each variable
+        
+        Returns a factor fx with a message from node previous to root
+        """
+        factors = self.factors
+        eTree = self.clusters
+        S = self.S
+        # fx is an auxiliary factor. Initialize fx with the factor associated with the root node
+        fx = factors[root]
+        # Depth-first search
+        for v in eTree[root]:
+            # This is an important step: avoid returning using the edge we came from
+            if not v == previous:
+                # Call pull recursively since root is not an edge with a single neighbour
+                self.messages[(v, root)] = self.pull(v, root)
+                # Here, we returned from the recursive call. 
+                # We need to join the received message with fx
+                fx = self.join(fx, messages[(v, root)])
+        # fx has all incomming messages multiplied by the node factor. It is time to marginalize the variables not is S_{ij}
+        for v in fx['dom']:
+            if not v in S[(previous, root)]:
+                # Call marginalize to remove variable v from fx's domain
+                fx = self.marginalize(fx, v)
+        return fx
+    
+    def push(self, root, previous):
+        """
+        argument 
+        `root`, factor to be marginalized.
+        `previous`, variable to be summed out.
+        `factors`, dictionary with all factors.
+        `eTree`, elimination tree.
+        `S`, separators dictionary.
+        `messages`, dictionary with messages.
+        `outcomeSpace`, dictionary with the domain of each variable
+        
+        Returns a factor fx with a message from node previous to root
+        """
+        factors = self.factors
+        eTree = self.clusters
+        S = self.S
+        outcomeSpace = self.outcomeSpace
+        for v in eTree[root]:
+            # This is an important step: avoid returning using the edge we came from        
+            if not v == previous:
+                # Initialize messages[root+v] with the factor associated with the root node
+                self.messages[(root,v)] = factors[root]
+                for w in eTree[root]:
+                    # This is an important step: do not consider the incomming message from v when computing the outgoing message to v
+                    if not v == w:
+                        # Join messages comming from w into self.messages[(root,v)]
+                        self.messages[(root,v)] = join(self.messages[(root,v)], self.messages[(w,root)])
+
+                # self.messages[(root,v)] has all incomming messages multiplied by the node factor. It is time to marginalize the variables not is S_{ij}
+                for w in self.messages[(root,v)]['dom']:
+                    if not w in S[''.join(sorted([v,root]))]:
+                        # Call marginalize to remove variable v from self.messages[(root,v)] domain
+                        self.messages[(root,v)] = self.marginalize(self.messages[(root,v)], w)
+                # Call push recursively and go to the next node v
+                push(v, root, factors, eTree, S, messages, outcomeSpace)
