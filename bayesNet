@@ -1,0 +1,19 @@
+digraph {
+	overlap=False splines=True
+	asia
+	asia -> tub
+	tub
+	tub -> either
+	smoke
+	smoke -> lung
+	smoke -> bronc
+	lung
+	lung -> either
+	bronc
+	bronc -> dysp
+	either
+	either -> xray
+	either -> dysp
+	xray
+	dysp
+}

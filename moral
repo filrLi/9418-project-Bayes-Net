@@ -1,0 +1,30 @@
+strict graph {
+	asia
+	asia -- tub
+	tub
+	tub -- either
+	tub -- asia
+	tub -- lung
+	smoke
+	smoke -- lung
+	smoke -- bronc
+	lung
+	lung -- either
+	lung -- smoke
+	lung -- tub
+	bronc
+	bronc -- dysp
+	bronc -- smoke
+	bronc -- either
+	either
+	either -- xray
+	either -- dysp
+	either -- tub
+	either -- lung
+	either -- bronc
+	xray
+	xray -- either
+	dysp
+	dysp -- bronc
+	dysp -- either
+}
