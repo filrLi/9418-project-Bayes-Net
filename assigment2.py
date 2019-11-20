@@ -638,8 +638,9 @@ class GraphicalModel:
         parents_value = [self.node_value[parent] for parent in parents]
         combinations = [tuple(parents_value + [node_value])
                         for node_value in self.outcomeSpace[node]]
-        prob_list = [self.factors[node]['table'][combination]
-                     for combination in combinations]
+        prob_list = np.array([self.factors[node]['table'][combination]
+                              for combination in combinations])
+        prob_list /= np.sum(prob_list)
         return np.random.choice(self.outcomeSpace[node], 1, p=prob_list)[0]
 
     @staticmethod
@@ -718,7 +719,7 @@ class JoinTree:
         S = dict()
         for cluster, nbs in clusters.items():
             for nb in nbs:
-                S[(cluster, nb)] = set(cluster) & set(nb)
+                S[tuple(sorted((cluster, nb)))] = set(cluster) & set(nb)
         return S
 
     def show_jointree(self):
@@ -822,8 +823,8 @@ class JoinTree:
             f1_entry = (entryDict[var] for var in f1['dom'])
             f2_entry = (entryDict[var] for var in f2['dom'])
 
-            p1 = prob(f1, *f1_entry)
-            p2 = prob(f2, *f2_entry)
+            p1 = f1['table'][tuple(f1_entry)]
+            p2 = f2['table'][tuple(f2_entry)]
 
             # Create a new table entry with the multiplication of p1 and p2
             table.append((entries, p1 * p2))
@@ -869,7 +870,7 @@ class JoinTree:
         dom.append('Pr')
         print(tabulate(table, headers=dom, tablefmt='orgtbl'))
 
-    def queryCluster(self, node, query):
+    def queryCluster(self, query):
         """
         argument 
         `factors`, dictionary with all factors.
@@ -882,9 +883,12 @@ class JoinTree:
         """
         factors = self.factors
         eTree = self.clusters
-        self.getMessages(node)
         messages = self.messages
-
+        var = query[0]
+        for node in self.clusters:
+            if var in node:
+                break
+        self.getMessages(node)
         # fx is an auxiliary factor. Initialize fx with the factor associated with the root node
         fx = factors[node]
         for v in eTree[node]:
@@ -894,7 +898,22 @@ class JoinTree:
             if not v in query:
                 # Call marginalize to remove variable v from fx domain
                 fx = self.marginalize(fx, v)
-        return fx
+        return self.normalize(fx)
+
+    def normalize(self, f):
+        """
+        argument 
+        `f`, factor to be normalized.
+
+        Returns a new factor f' as a copy of f with entries that sum up to 1
+        """
+        table = list()
+        sum = 0
+        for k, p in f['table'].items():
+            sum = sum + p
+        for k, p in f['table'].items():
+            table.append((k, p/sum))
+        return {'dom': f['dom'], 'table': odict(table)}
 
     def getMessages(self, root):
         """
@@ -928,10 +947,10 @@ class JoinTree:
                         self.messages[(root, v)], self.messages[(w, root)])
             # This is time to eliminate variables not in the separation between root and v
             for w in self.messages[(root, v)]['dom']:
-                if not w in S[(v, root)]:
+                if not w in S[tuple(sorted((v, root)))]:
                     # Call marginalize to remove variable v from messages[root+v] domain
-                    self.messages[(root, v)] = marginalize(
-                        messages[(root, v)], w)
+                    self.messages[(root, v)] = self.marginalize(
+                        self.messages[(root, v)], w)
             # Call push recursively and go to the next node v
             self.push(v, root)
 
@@ -961,10 +980,10 @@ class JoinTree:
                 self.messages[(v, root)] = self.pull(v, root)
                 # Here, we returned from the recursive call.
                 # We need to join the received message with fx
-                fx = self.join(fx, messages[(v, root)])
+                fx = self.join(fx, self.messages[(v, root)])
         # fx has all incomming messages multiplied by the node factor. It is time to marginalize the variables not is S_{ij}
         for v in fx['dom']:
-            if not v in S[(previous, root)]:
+            if not v in S[tuple(sorted((previous, root)))]:
                 # Call marginalize to remove variable v from fx's domain
                 fx = self.marginalize(fx, v)
         return fx
@@ -1000,9 +1019,9 @@ class JoinTree:
 
                 # self.messages[(root,v)] has all incomming messages multiplied by the node factor. It is time to marginalize the variables not is S_{ij}
                 for w in self.messages[(root, v)]['dom']:
-                    if not w in S[''.join(sorted([v, root]))]:
+                    if not w in S[tuple(sorted((v, root)))]:
                         # Call marginalize to remove variable v from self.messages[(root,v)] domain
                         self.messages[(root, v)] = self.marginalize(
                             self.messages[(root, v)], w)
                 # Call push recursively and go to the next node v
-                push(v, root, factors, eTree, S, messages, outcomeSpace)
+                self.push(v, root)
