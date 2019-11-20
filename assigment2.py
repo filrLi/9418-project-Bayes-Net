@@ -330,7 +330,7 @@ class GraphicalModel:
                     GT[w] = [v]
         return GT
 
-    def min_fill_order(self):
+    def min_degree_order(self):
         """
         get the variable elimination from the graph based on min-degree heuristic
         Return:
@@ -361,7 +361,7 @@ class GraphicalModel:
             prefix.append(min_degree_node)
         return prefix, width
 
-    def min_degree_order(self):
+    def min_fill_order(self):
         """
         get the variable elimination from the graph based on min degree heuristic
         Return:
@@ -515,12 +515,12 @@ class GraphicalModel:
                 p *= pf
             table.append((entries, p))
         return {'dom': tuple(common_vars), 'table': odict(table)}
+
     ####################################
     ######################################
     # Approximate inference
     ########################################
     ##########################################
-
     def gibbs_sampling(self, sample_num=100, chain_num=2, q_vars='all', **q_evis):
         """
         gibbs sampling the graph based on query, sample_num and chain_num specified by the user
@@ -870,7 +870,7 @@ class JoinTree:
         dom.append('Pr')
         print(tabulate(table, headers=dom, tablefmt='orgtbl'))
 
-    def queryCluster(self, query):
+    def query(self, query):
         """
         argument 
         `factors`, dictionary with all factors.
